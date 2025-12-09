@@ -1,12 +1,19 @@
 from flask import Flask, request
 import requests
 import json
+import os
 
-TOKEN = "توکن_خود8537033981:AAF0vQ2NOReID6uKaqQmrAH9v_IMa3yy5hw"
+TOKEN = os.environ.get("BOT_TOKEN")  # یا مستقیم توکن رباتت
+if not TOKEN:
+    TOKEN = "8537033981:AAF0vQ2NOReID6uKaqQmrAH9v_IMa3yy5hw"
+
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
 app = Flask(__name__)
 
+# -------------------------
+# ارسال پیام
+# -------------------------
 def send_message(chat_id, text, reply_markup=None):
     url = BASE_URL + "sendMessage"
     data = {
@@ -17,6 +24,20 @@ def send_message(chat_id, text, reply_markup=None):
         data["reply_markup"] = json.dumps(reply_markup)
     requests.post(url, data=data)
 
+# -------------------------
+# ارسال ویدیو
+# -------------------------
+def send_video(chat_id, file_name):
+    url = BASE_URL + "sendVideo"
+    file_path = os.path.join("files", file_name)
+    with open(file_path, "rb") as video:
+        files = {"video": video}
+        data = {"chat_id": chat_id}
+        requests.post(url, data=data, files=files)
+
+# -------------------------
+# کیبوردها
+# -------------------------
 def main_menu():
     return {
         "inline_keyboard": [
@@ -36,6 +57,9 @@ def disease_menu():
         ]
     }
 
+# -------------------------
+# وب‌هوک
+# -------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = request.get_json()
@@ -53,18 +77,25 @@ def webhook():
         data = cq["data"]
 
         if data == "edu":
-            send_message(chat_id, "بیماری را انتخاب کنید:", disease_menu())
+            send_message(chat_id, "یک بیماری را انتخاب کنید:", disease_menu())
         elif data == "edu_diabetes":
-            send_message(chat_id, "لینک آموزش دیابت:\nhttps://drive.google.com/...")
+            send_video(chat_id, "as.mp4")
         elif data == "edu_bp":
-            send_message(chat_id, "لینک آموزش فشار خون:\nhttps://drive.google.com/...")
+            send_video(chat_id, "aw.mp4")
         elif data == "edu_heart":
-            send_message(chat_id, "لینک آموزش بیماری‌های قلبی:\nhttps://drive.google.com/...")
+            send_video(chat_id, "qw.mp4")
         elif data == "back":
-            send_message(chat_id, "منوی اصلی :", main_menu())
+            send_message(chat_id, "بازگشت به منوی اصلی:", main_menu())
 
     return "ok"
 
 @app.route("/")
 def home():
     return "Bot is running"
+
+# -------------------------
+# اجرای سرور
+# -------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
