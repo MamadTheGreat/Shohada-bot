@@ -1,57 +1,21 @@
-import os
+from flask import Flask, request
 import requests
-import json
-import time
+import os
 
-# ===============================
-# دریافت توکن از محیط سیستم (امن)
-# ===============================
-TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise Exception("BOT_TOKEN not set in environment variables")
+TOKEN = os.environ.get("BOT_TOKEN")  # از Render می‌خونه
+API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
-last_update_id = None
+app = Flask(__name__)
 
-# ===============================
-# توابع API
-# ===============================
+# ---------- ابزار ارسال پیام ----------
 def send_message(chat_id, text, reply_markup=None):
-    url = BASE_URL + "sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text
-    }
+    url = f"{API_URL}/sendMessage"
+    data = {"chat_id": chat_id, "text": text}
     if reply_markup:
-        payload["reply_markup"] = json.dumps(reply_markup)
-    try:
-        requests.post(url, data=payload, timeout=10)
-    except:
-        pass
+        data["reply_markup"] = reply_markup
+    requests.post(url, json=data)
 
-def answer_callback(callback_query_id):
-    url = BASE_URL + "answerCallbackQuery"
-    payload = {"callback_query_id": callback_query_id}
-    try:
-        requests.post(url, data=payload, timeout=10)
-    except:
-        pass
-
-def get_updates():
-    global last_update_id
-    try:
-        url = BASE_URL + "getUpdates"
-        params = {}
-        if last_update_id:
-            params["offset"] = last_update_id + 1
-        r = requests.get(url, params=params, timeout=10)
-        return r.json()
-    except:
-        return {"ok": False, "result": []}
-
-# ===============================
-# کیبوردها
-# ===============================
+# ---------- منوها ----------
 def main_menu():
     return {
         "inline_keyboard": [
@@ -67,51 +31,51 @@ def disease_menu():
             [{"text": "دیابت نوع ۲", "callback_data": "edu_diabetes"}],
             [{"text": "فشار خون", "callback_data": "edu_bp"}],
             [{"text": "بیماری‌های قلبی", "callback_data": "edu_heart"}],
-            [{"text": "⬅️ بازگشت", "callback_data": "back"}]
+            [{"text": "بازگشت", "callback_data": "back"}]
         ]
     }
 
-# ===============================
-# پردازش آپدیت‌ها
-# ===============================
-def handle_update(update):
-    if "message" in update:
-        message = update["message"]
-        chat_id = message["chat"]["id"]
-        text = message.get("text", "")
-        if text == "/start":
-            send_message(chat_id, "✅ به ربات آموزشی بیمارستان شهدا خوش آمدید.", reply_markup=main_menu())
+# ---------- دریافت پیام از تلگرام ----------
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json()
 
-    if "callback_query" in update:
-        cq = update["callback_query"]
-        data = cq["data"]
+    # پیام معمولی
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
+
+        if text == "/start":
+            send_message(chat_id, "به ربات آموزشی بیمارستان شهدا خوش آمدید.", reply_markup=main_menu())
+
+    # کلیک روی دکمه منو
+    if "callback_query" in data:
+        cq = data["callback_query"]
         chat_id = cq["message"]["chat"]["id"]
-        answer_callback(cq["id"])
+        data = cq["data"]
 
         if data == "edu":
             send_message(chat_id, "یک بیماری را انتخاب کنید:", reply_markup=disease_menu())
+
         elif data == "edu_diabetes":
-            send_message(chat_id, "📄 لینک آموزش دیابت:\nhttps://drive.google.com/uc?id=11mrRtXtUVY9IxOSxH0Y40nRLzkC8MtN1")
+            send_message(chat_id, "لینک آموزش دیابت: ...")
+
         elif data == "edu_bp":
-            send_message(chat_id, "📄 لینک آموزش فشار خون:\nhttps://drive.google.com/uc?id=1f81sHOgCRfpUJFBAHJSuRgfWQwaTklZs")
+            send_message(chat_id, "لینک آموزش فشار خون: ...")
+
         elif data == "edu_heart":
-            send_message(chat_id, "📄 لینک آموزش بیماری‌های قلبی:\nhttps://drive.google.com/uc?id=1f81sHOgCRfpUJFBAHJSuRgfWQwaTklZs")
+            send_message(chat_id, "لینک آموزش قلب: ...")
+
         elif data == "back":
             send_message(chat_id, "بازگشت به منوی اصلی:", reply_markup=main_menu())
 
-# ===============================
-# اجرای ربات
-# ===============================
-def run_bot():
-    global last_update_id
-    print("✅ Bot is running...")
-    while True:
-        updates = get_updates()
-        if updates.get("ok"):
-            for update in updates["result"]:
-                last_update_id = update["update_id"]
-                handle_update(update)
-        time.sleep(1)
+    return "OK", 200
 
+# ---------- تست سلامت سرور ----------
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+# ---------- اجرا ----------
 if __name__ == "__main__":
-    run_bot()
+    app.run(host="0.0.0.0", port=5000)
