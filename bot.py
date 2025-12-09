@@ -1,8 +1,9 @@
 from flask import Flask, request
 import requests
 import json
+import os
 
-TOKEN = "توکن_خود8537033981:AAF0vQ2NOReID6uKaqQmrAH9v_IMa3yy5hw"
+TOKEN = os.environ.get("BOT_TOKEN")   # امن
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
 app = Flask(__name__)
@@ -68,3 +69,7 @@ def webhook():
 @app.route("/")
 def home():
     return "Bot is running"
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
