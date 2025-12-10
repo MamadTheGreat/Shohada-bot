@@ -1,92 +1,71 @@
 import os
-import datetime
-import io
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import datetime
 import matplotlib.pyplot as plt
 import requests
-import json
 
-TOKEN = os.environ.get("BOT_TOKEN")
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
+# مسیر فایل JSON سرویس اکانت گوگل
+creds_path = "config/google_service_account.json"
+scope = ["https://spreadsheets.google.com/feeds",
+         "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+client = gspread.authorize(creds)
 
-CREDS_PATH = os.path.join("config", "google_sa.json")
-
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_PATH, scope)
-gc = gspread.authorize(creds)
-
-# ---------------------
-# منوها
-# ---------------------
+# منوی علائم
 def symptoms_menu():
     return {
         "inline_keyboard": [
-            [{"text": "قند خون", "callback_data": "blood_sugar"}],
-            [{"text": "فشار خون", "callback_data": "bp"}],
-            [{"text": "وزن", "callback_data": "weight"}],
-            [{"text": "📊 مشاهده تاریخچه علائم", "callback_data": "show_history"}],
+            [{"text": "قند خون", "callback_data": "sym_blood"}],
+            [{"text": "فشار خون", "callback_data": "sym_bp"}],
+            [{"text": "وزن", "callback_data": "sym_weight"}],
+            [{"text": "مشاهده تاریخچه علائم", "callback_data": "sym_history"}],
             [{"text": "⬅ بازگشت", "callback_data": "back"}]
         ]
     }
 
-# ---------------------
-# شیت کاربر
-# ---------------------
-def get_user_sheet(chat_id):
+# ثبت مقدار در شیت
+def handle_symptom_input(chat_id, value, user_state):
     sheet_name = f"user_{chat_id}"
     try:
-        sheet = gc.open(sheet_name)
-    except gspread.SpreadsheetNotFound:
-        sheet = gc.create(sheet_name)
-        worksheet = sheet.sheet1
-        worksheet.update("A1", [["تاریخ و زمان", "نوع علامت", "مقدار"]])
-    return gc.open(sheet_name).sheet1
+        sheet = client.open(sheet_name).sheet1
+    except:
+        sheet = client.create(sheet_name).sheet1
+        sheet.append_row(["timestamp", "type", "value"])
 
-def add_symptom(chat_id, symptom_type, value):
-    sheet = get_user_sheet(chat_id)
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([now, symptom_type, value])
+    current_type = user_state[chat_id]["expecting"]
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([timestamp, current_type, value])
+    user_state.pop(chat_id, None)
 
-# ---------------------
-# نمودار تاریخچه
-# ---------------------
-def generate_chart(chat_id):
-    sheet = get_user_sheet(chat_id)
-    data = sheet.get_all_records()
-    if not data:
-        return None
+# نمایش نمودار تاریخچه
+def show_history(chat_id):
+    sheet_name = f"user_{chat_id}"
+    try:
+        sheet = client.open(sheet_name).sheet1
+    except:
+        return
 
-    sugar = [(row["تاریخ و زمان"], float(row["مقدار"])) for row in data if row["نوع علامت"] == "قند خون"]
-    bp = [(row["تاریخ و زمان"], float(row["مقدار"])) for row in data if row["نوع علامت"] == "فشار خون"]
-    weight = [(row["تاریخ و زمان"], float(row["مقدار"])) for row in data if row["نوع علامت"] == "وزن"]
+    records = sheet.get_all_records()
+    if not records:
+        return
 
-    plt.figure(figsize=(10,5))
+    types = list(set([r["type"] for r in records]))
+    for t in types:
+        data = [float(r["value"]) for r in records if r["type"] == t]
+        times = [r["timestamp"] for r in records if r["type"] == t]
+        plt.plot(times, data, label=t)
 
-    if sugar:
-        dates, values = zip(*sugar)
-        plt.plot(dates, values, label="قند خون", marker='o')
-    if bp:
-        dates, values = zip(*bp)
-        plt.plot(dates, values, label="فشار خون", marker='o')
-    if weight:
-        dates, values = zip(*weight)
-        plt.plot(dates, values, label="وزن", marker='o')
-
-    plt.xticks(rotation=45, ha="right")
+    plt.xlabel("زمان")
     plt.ylabel("مقدار")
-    plt.title("تاریخچه علائم")
     plt.legend()
+    plt.xticks(rotation=45)
     plt.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
+    img_path = f"files/{chat_id}_history.png"
+    plt.savefig(img_path)
     plt.close()
-    return buf
 
-def send_chart(chat_id, buf):
-    url = BASE_URL + "sendPhoto"
-    files = {"photo": buf}
+    url = f"https://api.telegram.org/bot{os.environ.get('BOT_TOKEN')}/sendPhoto"
+    files = {"photo": open(img_path, "rb")}
     data = {"chat_id": chat_id}
     requests.post(url, data=data, files=files)
