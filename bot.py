@@ -1,95 +1,45 @@
-# bot.py
 from flask import Flask, request
-import requests
-import json
 import os
-
 from education import send_video, main_menu, disease_menu   # ماژول آموزش
-from symptoms import symptoms_menu, record_symptom, generate_history_chart, user_state  # ماژول علائم
-
-TOKEN = os.environ.get("BOT_TOKEN")  # امن
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
+from symptoms import send_symptom_menu, record_symptom       # ماژول علائم
 
 app = Flask(__name__)
 
-# ------------------------------
-# توابع کمکی
-# ------------------------------
-def send_message(chat_id, text, reply_markup=None):
-    url = BASE_URL + "sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": text
-    }
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, data=data)
+TOKEN = os.environ.get("BOT_TOKEN")
+BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
-def send_photo(chat_id, photo_path, caption=None):
-    url = BASE_URL + "sendPhoto"
-    files = {"photo": open(photo_path, "rb")}
-    data = {"chat_id": chat_id}
-    if caption:
-        data["caption"] = caption
-    requests.post(url, data=data, files=files)
-
-# ------------------------------
-# webhook
-# ------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = request.get_json()
 
+    # پیام متنی
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
 
-        # شروع ربات
         if text == "/start":
-            send_message(chat_id, "به ربات آموزشی بیمارستان شهدا خوش آمدید.", main_menu())
+            send_video(chat_id, "files/as.mp4", "به ربات آموزشی بیمارستان شهدا خوش آمدید!")
+            main_menu_keyboard = main_menu()
+            send_symptom_menu(chat_id, main_menu_keyboard)
 
-        # اگر کاربر در حالت وارد کردن مقدار علائم است
-        elif chat_id in user_state:
-            symptom = user_state[chat_id]["symptom"]
-            try:
-                value = float(text.replace(",", "."))  # مقدار عددی
-                record_symptom(chat_id, symptom, value)
-                send_message(chat_id, f"{symptom} با مقدار {value} ثبت شد.", symptoms_menu())
-                del user_state[chat_id]
-            except ValueError:
-                send_message(chat_id, "لطفا یک عدد معتبر وارد کنید:")
-
+    # Callback Query (دکمه‌های اینلاین)
     if "callback_query" in update:
         cq = update["callback_query"]
         chat_id = cq["message"]["chat"]["id"]
         data = cq["data"]
 
-        # ---------- آموزش ----------
-        if data == "edu":
-            send_message(chat_id, "بیماری را انتخاب کنید:", disease_menu())
-        elif data == "edu_diabetes":
-            send_video(chat_id, "files/as.mp4", "آموزش دیابت نوع ۲")
-        elif data == "edu_bp":
-            send_video(chat_id, "files/aw.mp4", "آموزش فشار خون")
-        elif data == "edu_heart":
-            send_video(chat_id, "files/qw.mp4", "آموزش بیماری‌های قلبی")
-        elif data == "back":
-            send_message(chat_id, "منوی اصلی :", main_menu())
-
-        # ---------- ثبت علائم ----------
-        elif data == "symptoms":
-            send_message(chat_id, "علائم را انتخاب کنید:", symptoms_menu())
-        elif data in ["sugar", "bp", "weight"]:
-            user_state[chat_id] = {"symptom": data}
-            send_message(chat_id, f"لطفا مقدار {data} را وارد کنید:")
-        elif data == "history":
-            chart_path = generate_history_chart(chat_id)
-            if chart_path:
-                send_photo(chat_id, chart_path, "تاریخچه علائم شما")
+        # ماژول آموزش
+        if data.startswith("edu"):
+            if data == "edu":
+                send_video(chat_id, "files/as.mp4", "بیماری را انتخاب کنید:")
+                keyboard = disease_menu()
+                send_symptom_menu(chat_id, keyboard)
             else:
-                send_message(chat_id, "هیچ تاریخی ثبت نشده است.")
-        elif data == "back":
-            send_message(chat_id, "منوی اصلی :", main_menu())
+                send_video(chat_id, f"files/{data.split('_')[-1]}.mp4", f"آموزش {data.split('_')[-1]}")
+
+        # ماژول علائم
+        elif data.startswith("symptom"):
+            record_symptom(chat_id, data)
 
     return "ok"
 
