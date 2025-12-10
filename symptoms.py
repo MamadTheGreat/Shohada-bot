@@ -1,71 +1,75 @@
-import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import datetime
+import os
 import matplotlib.pyplot as plt
-import requests
 
-# مسیر فایل JSON سرویس اکانت گوگل
-creds_path = "config/google_service_account.json"
-scope = ["https://spreadsheets.google.com/feeds",
-         "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
-client = gspread.authorize(creds)
+# ===== تنظیم مسیر فایل JSON سرویس اکانت =====
+CREDS_PATH = os.path.join("config", "google_sa.json")
 
-# منوی علائم
-def symptoms_menu():
-    return {
-        "inline_keyboard": [
-            [{"text": "قند خون", "callback_data": "sym_blood"}],
-            [{"text": "فشار خون", "callback_data": "sym_bp"}],
-            [{"text": "وزن", "callback_data": "sym_weight"}],
-            [{"text": "مشاهده تاریخچه علائم", "callback_data": "sym_history"}],
-            [{"text": "⬅ بازگشت", "callback_data": "back"}]
-        ]
-    }
+# ===== اتصال به Google Sheet =====
+def get_client():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_PATH, scope)
+    return gspread.authorize(creds)
 
-# ثبت مقدار در شیت
-def handle_symptom_input(chat_id, value, user_state):
-    sheet_name = f"user_{chat_id}"
+# ===== پیدا کردن یا ساخت شیت مخصوص هر کاربر =====
+def get_or_create_sheet(chat_id):
+    client = get_client()
+    sheet_name = f"user_{chat_id}_symptoms"
+
     try:
         sheet = client.open(sheet_name).sheet1
     except:
         sheet = client.create(sheet_name).sheet1
-        sheet.append_row(["timestamp", "type", "value"])
+        # هدرها
+        sheet.append_row(["date", "time", "type", "value"])
 
-    current_type = user_state[chat_id]["expecting"]
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([timestamp, current_type, value])
-    user_state.pop(chat_id, None)
+    return sheet
 
-# نمایش نمودار تاریخچه
-def show_history(chat_id):
-    sheet_name = f"user_{chat_id}"
-    try:
-        sheet = client.open(sheet_name).sheet1
-    except:
-        return
+# ===== افزودن علامت =====
+def add_symptom(chat_id, symptom_type, value):
+    sheet = get_or_create_sheet(chat_id)
+    now = datetime.datetime.now()
+    date = now.strftime("%Y-%m-%d")
+    time = now.strftime("%H:%M:%S")
 
-    records = sheet.get_all_records()
-    if not records:
-        return
+    sheet.append_row([date, time, symptom_type, value])
 
-    types = list(set([r["type"] for r in records]))
-    for t in types:
-        data = [float(r["value"]) for r in records if r["type"] == t]
-        times = [r["timestamp"] for r in records if r["type"] == t]
-        plt.plot(times, data, label=t)
+# ===== ساخت نمودار =====
+def plot_symptoms(chat_id):
+    sheet = get_or_create_sheet(chat_id)
+    rows = sheet.get_all_values()
 
-    plt.xlabel("زمان")
-    plt.ylabel("مقدار")
-    plt.legend()
+    # اگر فقط هدر وجود دارد
+    if len(rows) <= 1:
+        return None
+
+    dates = []
+    values = []
+
+    for row in rows[1:]:
+        try:
+            date_time = f"{row[0]} {row[1]}"
+            value = float(row[3])
+            dates.append(date_time)
+            values.append(value)
+        except:
+            continue
+
+    if not values:
+        return None
+
+    plt.figure()
+    plt.plot(dates, values, marker="o")
     plt.xticks(rotation=45)
     plt.tight_layout()
-    img_path = f"files/{chat_id}_history.png"
+
+    img_path = f"symptoms_{chat_id}.png"
     plt.savefig(img_path)
     plt.close()
 
-    url = f"https://api.telegram.org/bot{os.environ.get('BOT_TOKEN')}/sendPhoto"
-    files = {"photo": open(img_path, "rb")}
-    data = {"chat_id": chat_id}
-    requests.post(url, data=data, files=files)
+    return img_path
