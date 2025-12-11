@@ -2,11 +2,11 @@ from flask import Flask, request
 import os
 import requests
 import json
-import time
+import time # برای وقفه‌های احتمالی در رسم نمودار
 
 # وارد کردن ماژول‌های خودتان
 from symptoms import add_symptom, plot_symptoms
-from education import handle_education, get_main_menu_keyboard, get_remove_keyboard # توابع جدید برای کیبورد اضافه شدند
+from education import handle_education, get_main_menu_keyboard, get_remove_keyboard # توابع کیبورد اضافه شدند
 
 app = Flask(__name__)
 
@@ -14,14 +14,14 @@ app = Flask(__name__)
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TOKEN}"
-WEBHOOK_PATH = f"/{TOKEN}"
+WEBHOOK_PATH = f"/{TOKEN}" # مسیر استاندارد وب‌هوک
 
-# ذخیره وضعیت کاربران (هشدار: این متغیر با ریستارت شدن ربات پاک می‌شود)
-user_sessions = {}  # chat_id -> وضعیت فعلی ("main", "symptoms", "education")
+# ذخیره وضعیت کاربران
+user_sessions = {}
 
 # --- توابع کمکی ---
 def send_message(chat_id, text, reply_markup=None):
-    """ارسال پیام متنی با پشتیبانی از دکمه‌های کیبوردی"""
+    """ارسال پیام متنی با پشتیبانی از دکمه‌های کیبوردی (Reply Keyboard)"""
     try:
         url = f"{TELEGRAM_API_URL}/sendMessage"
         payload = {"chat_id": chat_id, "text": text}
@@ -50,12 +50,11 @@ def handle_user_message(chat_id, text):
         return
 
     text = text.strip()
+    keyboard = get_main_menu_keyboard() # کیبورد اصلی
 
-    # دکمه بازگشت یا شروع
+    # اگر کاربر تازه وارد است یا درخواست منو می‌دهد
     if text == "/start" or text.lower() == "منو" or chat_id not in user_sessions:
         user_sessions[chat_id] = "main"
-        # استفاده از کیبورد
-        keyboard = get_main_menu_keyboard()
         send_message(chat_id, "به ربات خوش آمدید. بخش مورد نظر خود را انتخاب کنید.", reply_markup=keyboard)
         return
 
@@ -65,7 +64,7 @@ def handle_user_message(chat_id, text):
     if status == "main":
         if text == "📝 ثبت علائم":
             user_sessions[chat_id] = "symptoms"
-            # حذف کیبورد اصلی برای امکان تایپ راحت
+            # حذف کیبورد اصلی برای امکان تایپ راحت (اگرچه دکمه‌ها در education.py تعریف شده‌اند)
             send_message(chat_id, "وارد بخش ثبت علائم شدید.\nلطفا نوع و مقدار را با دو نقطه جدا کنید.\nمثال:\nقند خون: 120", reply_markup=get_remove_keyboard())
         
         elif text == "📘 آموزش":
@@ -73,10 +72,10 @@ def handle_user_message(chat_id, text):
             send_message(chat_id, "به بخش آموزش خوش آمدید.\nموضوع خود را بنویسید (مثلاً: دیابت، فشار خون، قلب):")
 
         elif text == "👤 اتصال به کارشناس":
-            send_message(chat_id, "این قابلیت در دست توسعه است.")
+            send_message(chat_id, "این قابلیت در دست توسعه است. برای بازگشت 'منو' را تایپ کنید.", reply_markup=keyboard)
 
         else:
-            send_message(chat_id, "لطفا از دکمه‌های منو استفاده کنید.")
+            send_message(chat_id, "لطفا از دکمه‌های منو استفاده کنید.", reply_markup=keyboard)
 
 
     # --- بخش ثبت علائم ---
@@ -94,8 +93,7 @@ def handle_user_message(chat_id, text):
                     
                     # رسم و ارسال نمودار
                     send_message(chat_id, "⏳ در حال ترسیم نمودار...")
-                    # برای اطمینان بیشتر، یک وقفه کوتاه (اگرچه در محیط async نیاز نیست)
-                    time.sleep(1) 
+                    time.sleep(1) # وقفه کوتاه
                     
                     chart_path = plot_symptoms(chat_id)
                     if chart_path and os.path.exists(chart_path):
@@ -112,7 +110,7 @@ def handle_user_message(chat_id, text):
         else:
             send_message(chat_id, "فرمت نادرست است. مثال:\nقند خون: 120")
         
-        send_message(chat_id, "برای بازگشت به منو اصلی، 'منو' را تایپ کنید.")
+        send_message(chat_id, "برای بازگشت به منو اصلی، 'منو' را تایپ کنید.", reply_markup=keyboard)
 
 
     # --- بخش آموزش ---
@@ -137,22 +135,15 @@ def webhook():
 # --- ست کردن وب‌هوک ---
 @app.route("/set_webhook", methods=["GET"])
 def set_webhook():
-    """این تابع یک بار برای تنظیم آدرس HTTPS در تلگرام اجرا می‌شود"""
     try:
-        # ساخت URL با پروتکل HTTPS و توکن
         url = f"{TELEGRAM_API_URL}/setWebhook?url={WEBHOOK_URL}{WEBHOOK_PATH}"
         response = requests.get(url, timeout=5)
         return response.json()
     except Exception as e:
         return {"error": str(e)}
 
-# --- صفحه اصلی (تست زنده بودن ربات) ---
-@app.route("/", methods=["GET"])
-def home():
-    return "Shohada Bot is running!"
-
 # --- اجرای برنامه ---
 if __name__ == "__main__":
-    # Render از متغیر محیطی PORT استفاده می‌کند
     port = int(os.environ.get("PORT", 5000))
+    # debug=True برای محیط Production نامناسب است.
     app.run(host="0.0.0.0", port=port)
