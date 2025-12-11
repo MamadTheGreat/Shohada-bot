@@ -1,4 +1,4 @@
-import requests, json, os
+import http_requests, json, os
 
 TOKEN = os.environ.get("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
@@ -8,7 +8,7 @@ def send_message(chat_id, text, reply_markup=None):
     data = {"chat_id": chat_id, "text": text}
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, data=data)
+    http_requests.post(url, data=data)
 
 def send_video(chat_id, video_data):
     mapping = {
@@ -22,7 +22,7 @@ def send_video(chat_id, video_data):
     url = BASE_URL + "sendVideo"
     files = {"video": open(path, "rb")}
     data = {"chat_id": chat_id, "caption": caption}
-    requests.post(url, data=data, files=files)
+    http_requests.post(url, data=data, files=files)
 
 def main_menu():
     return {

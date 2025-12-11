@@ -1,5 +1,5 @@
 from flask import Flask, request
-import requests
+import http_requests
 import json
 import os
 from education import send_video, main_menu, disease_menu
@@ -18,7 +18,7 @@ def send_message(chat_id, text, reply_markup=None):
     data = {"chat_id": chat_id, "text": text}
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, data=data)
+    http_requests.post(url, data=data)
 
 def send_photo(chat_id, photo_path, caption=None):
     url = BASE_URL + "sendPhoto"
@@ -26,7 +26,7 @@ def send_photo(chat_id, photo_path, caption=None):
     data = {"chat_id": chat_id}
     if caption:
         data["caption"] = caption
-    requests.post(url, data=data, files=files)
+    http_requests.post(url, data=data, files=files)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():

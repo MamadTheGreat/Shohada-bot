@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 .venv/
-config/google_sa.json
+.config/google_sa.json
+config/*.json

@@ -1,75 +1,108 @@
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import datetime
 import os
+import json
+from datetime import datetime
 import matplotlib.pyplot as plt
+import pandas as pd
+from io import BytesIO
 
-# ===== تنظیم مسیر فایل JSON سرویس اکانت =====
-CREDS_PATH = os.path.join("config", "google_sa.json")
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
 
-# ===== اتصال به Google Sheet =====
-def get_client():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_PATH, scope)
-    return gspread.authorize(creds)
+# ===== Google Sheets Config =====
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# ===== پیدا کردن یا ساخت شیت مخصوص هر کاربر =====
-def get_or_create_sheet(chat_id):
-    client = get_client()
-    sheet_name = f"user_{chat_id}_symptoms"
+# از ENV در Render خوانده می‌شود
+google_sa = json.loads(os.environ["GOOGLE_CREDS"])
+SHEET_ID = os.environ["SHEET_ID"]
 
-    try:
-        sheet = client.open(sheet_name).sheet1
-    except:
-        sheet = client.create(sheet_name).sheet1
-        # هدرها
-        sheet.append_row(["date", "time", "type", "value"])
+creds = service_account.Credentials.from_service_account_info(
+    google_sa, scopes=SCOPES
+)
 
-    return sheet
+service = build("sheets", "v4", credentials=creds)
+sheet = service.spreadsheets().values()
 
-# ===== افزودن علامت =====
-def add_symptom(chat_id, symptom_type, value):
-    sheet = get_or_create_sheet(chat_id)
-    now = datetime.datetime.now()
-    date = now.strftime("%Y-%m-%d")
-    time = now.strftime("%H:%M:%S")
+RANGE = "Symptoms!A:F"
 
-    sheet.append_row([date, time, symptom_type, value])
 
-# ===== ساخت نمودار =====
-def plot_symptoms(chat_id):
-    sheet = get_or_create_sheet(chat_id)
-    rows = sheet.get_all_values()
+# -----------------------------
+# ثبت علائم
+# -----------------------------
+def save_symptoms(user_id, glucose="", sys_bp="", dia_bp="", weight="", other=""):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # اگر فقط هدر وجود دارد
-    if len(rows) <= 1:
+    row = [timestamp, glucose, sys_bp, dia_bp, weight, other]
+
+    sheet.append(
+        spreadsheetId=SHEET_ID,
+        range=RANGE,
+        valueInputOption="USER_ENTERED",
+        body={"values": [row]},
+    ).execute()
+
+
+# -----------------------------
+# استخراج تاریخچه
+# -----------------------------
+def load_history(symptom_type):
+    data = sheet.get(
+        spreadsheetId=SHEET_ID,
+        range=RANGE
+    ).execute()
+
+    values = data.get("values", [])
+
+    if len(values) <= 1:
         return None
 
-    dates = []
-    values = []
+    df = pd.DataFrame(values[1:], columns=values[0])
 
-    for row in rows[1:]:
-        try:
-            date_time = f"{row[0]} {row[1]}"
-            value = float(row[3])
-            dates.append(date_time)
-            values.append(value)
-        except:
-            continue
+    if symptom_type == "glucose":
+        df = df[df["Glucose"] != ""]
+        df["Glucose"] = df["Glucose"].astype(float)
+        return df
 
-    if not values:
-        return None
+    if symptom_type == "bp":
+        df = df[df["Sys"] != ""]
+        df["Sys"] = df["Sys"].astype(float)
+        df["Dia"] = df["Dia"].astype(float)
+        return df
 
-    plt.figure()
-    plt.plot(dates, values, marker="o")
+    if symptom_type == "weight":
+        df = df[df["Weight"] != ""]
+        df["Weight"] = df["Weight"].astype(float)
+        return df
+
+    return None
+
+
+# -----------------------------
+# ساخت نمودار و ارسال عکس
+# -----------------------------
+def build_plot(df, symptom):
+    fig, ax = plt.subplots(figsize=(7, 4))
+
+    if symptom == "glucose":
+        ax.plot(df["Date"], df["Glucose"])
+        ax.set_title("تاریخچه قند خون")
+        ax.set_ylabel("mg/dL")
+
+    elif symptom == "bp":
+        ax.plot(df["Date"], df["Sys"], label="سیستول")
+        ax.plot(df["Date"], df["Dia"], label="دیاستول")
+        ax.set_title("تاریخچه فشار خون")
+        ax.legend()
+
+    elif symptom == "weight":
+        ax.plot(df["Date"], df["Weight"])
+        ax.set_title("تاریخچه وزن")
+
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-    img_path = f"symptoms_{chat_id}.png"
-    plt.savefig(img_path)
+    buf = BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
     plt.close()
 
-    return img_path
+    return buf
