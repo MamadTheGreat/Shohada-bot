@@ -1,28 +1,29 @@
-import http_requests, json, os
-
-TOKEN = os.environ.get("BOT_TOKEN")
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
+import os
+from http_requests import telegram_post
+import json
 
 def send_message(chat_id, text, reply_markup=None):
-    url = BASE_URL + "sendMessage"
     data = {"chat_id": chat_id, "text": text}
     if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    http_requests.post(url, data=data)
+        data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+    telegram_post("sendMessage", data)
 
-def send_video(chat_id, video_data):
+def send_video(chat_id, video_key):
     mapping = {
         "edu_diabetes": ("files/as.mp4", "آموزش دیابت نوع ۲"),
         "edu_bp": ("files/aw.mp4", "آموزش فشار خون"),
         "edu_heart": ("files/qw.mp4", "آموزش بیماری‌های قلبی")
     }
-    if video_data not in mapping:
+    if video_key not in mapping:
         return
-    path, caption = mapping[video_data]
-    url = BASE_URL + "sendVideo"
-    files = {"video": open(path, "rb")}
-    data = {"chat_id": chat_id, "caption": caption}
-    http_requests.post(url, data=data, files=files)
+    path, caption = mapping[video_key]
+    if not os.path.exists(path):
+        print(f"Video not found: {path}")
+        return
+    with open(path, "rb") as f:
+        files = {"video": f}
+        data = {"chat_id": chat_id, "caption": caption}
+        telegram_post("sendVideo", data, files)
 
 def main_menu():
     return {
