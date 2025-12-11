@@ -5,9 +5,6 @@ TOKEN = os.environ.get("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
 def telegram_post(method, data=None, files=None):
-    """
-    فراخوانی امن Telegram API
-    """
     url = BASE_URL + method
     try:
         resp = requests.post(url, data=data, files=files, timeout=10)

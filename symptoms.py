@@ -8,7 +8,6 @@ from google.oauth2 import service_account
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# Google Sheets creds و Sheet ID از ENV
 google_sa = json.loads(os.environ["GOOGLE_CREDS"])
 SHEET_ID = os.environ["SHEET_ID"]
 
@@ -16,7 +15,7 @@ creds = service_account.Credentials.from_service_account_info(google_sa, scopes=
 service = build("sheets", "v4", credentials=creds)
 sheet = service.spreadsheets().values()
 
-RANGE = "Symptoms!A:E"  # ستون‌ها: Date | Glucose | Sys | Dia | Weight
+RANGE = "Symptoms!A:E"
 
 def add_symptom(user_id, symptom_type, value):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
