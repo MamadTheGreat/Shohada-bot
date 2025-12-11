@@ -1,104 +1,123 @@
-import os
-import json
 from flask import Flask, request
-from education import send_video, main_menu, disease_menu
+import os
+import requests
+
+# وارد کردن ماژول‌های خودتان
 from symptoms import add_symptom, plot_symptoms
-from http_requests import telegram_post
+from education import handle_education
 
 app = Flask(__name__)
 
-# وضعیت کاربران
-STATE_FILE = "user_state.json"
-if os.path.exists(STATE_FILE):
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-        user_state = json.load(f)
-else:
-    user_state = {}
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-def save_user_state():
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(user_state, f, ensure_ascii=False)
+# ذخیره وضعیت کاربران
+user_sessions = {}  # chat_id -> وضعیت فعلی ("main", "symptoms", "education")
 
-def send_message(chat_id, text, reply_markup=None):
-    data = {"chat_id": chat_id, "text": text}
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-    telegram_post("sendMessage", data)
+# ارسال پیام متنی
+def send_message(chat_id, text):
+    try:
+        url = f"{TELEGRAM_API_URL}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text}
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Error sending message: {e}")
 
-def send_photo(chat_id, photo_path, caption=None):
-    data = {"chat_id": chat_id}
-    if caption:
-        data["caption"] = caption
-    telegram_post("sendPhoto", data, files={"photo": open(photo_path, "rb")})
+# ارسال عکس
+def send_photo(chat_id, photo_path, caption=""):
+    try:
+        url = f"{TELEGRAM_API_URL}/sendPhoto"
+        with open(photo_path, "rb") as f:
+            files = {"photo": f}
+            data = {"chat_id": chat_id, "caption": caption}
+            requests.post(url, files=files, data=data, timeout=10)
+    except Exception as e:
+        print(f"Error sending photo: {e}")
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    update = request.get_json()
+# مدیریت پیام کاربر
+def handle_user_message(chat_id, text):
+    if not text:
+        return
 
-    if "message" in update:
-        chat_id = update["message"]["chat"]["id"]
-        text = update["message"].get("text", "")
+    text = text.strip()
 
-        if str(chat_id) in user_state:
-            symptom_type = user_state.pop(str(chat_id))
-            save_user_state()
-            try:
-                value = float(text)
+    # برگشت به منو اصلی
+    if text.lower() == "منو":
+        user_sessions[chat_id] = "main"
+        send_message(chat_id, "منو اصلی:\n1. ثبت علائم\n2. آموزش")
+        return
+
+    # اگر کاربر تازه وارد است
+    if chat_id not in user_sessions:
+        user_sessions[chat_id] = "main"
+        send_message(chat_id, "سلام! لطفا بخش مورد نظر را انتخاب کنید:\n1. ثبت علائم\n2. آموزش")
+        return
+
+    status = user_sessions[chat_id]
+
+    if status == "main":
+        if text == "1":
+            user_sessions[chat_id] = "symptoms"
+            send_message(chat_id, "لطفا نوع و مقدار علامت خود را وارد کنید، مثال:\nقند خون: 120")
+        elif text == "2":
+            user_sessions[chat_id] = "education"
+            send_message(chat_id, "به بخش آموزش خوش آمدید. سوال یا موضوع خود را وارد کنید:")
+        else:
+            send_message(chat_id, "لطفا یکی از گزینه‌های منو را انتخاب کنید:\n1. ثبت علائم\n2. آموزش")
+
+    elif status == "symptoms":
+        try:
+            # انتظار داریم کاربر پیام به شکل "نوع: مقدار" بده
+            if ":" in text:
+                symptom_type, value = map(str.strip, text.split(":", 1))
                 add_symptom(chat_id, symptom_type, value)
-                send_message(chat_id, f"{symptom_type} شما با مقدار {value} ثبت شد.")
-            except ValueError:
-                send_message(chat_id, "لطفاً یک عدد معتبر وارد کنید.")
-        elif text == "/start":
-            send_message(chat_id, "به ربات آموزشی بیمارستان شهدا خوش آمدید.", main_menu())
+                send_message(chat_id, f"علائم شما ثبت شد: {symptom_type} = {value}")
 
-    if "callback_query" in update:
-        cq = update["callback_query"]
-        chat_id = cq["message"]["chat"]["id"]
-        data = cq["data"]
+                # ساخت نمودار
+                chart_path = plot_symptoms(chat_id)
+                if chart_path:
+                    send_photo(chat_id, chart_path, caption="تاریخچه علائم شما")
+                else:
+                    send_message(chat_id, "فعلا داده کافی برای نمودار وجود ندارد.")
 
-        if data == "edu":
-            send_message(chat_id, "بیماری را انتخاب کنید:", disease_menu())
-        elif data in ["edu_diabetes", "edu_bp", "edu_heart"]:
-            send_video(chat_id, data)
-        elif data == "symptoms":
-            reply = {
-                "inline_keyboard": [
-                    [{"text": "قند خون", "callback_data": "symp_sugar"}],
-                    [{"text": "فشار خون", "callback_data": "symp_bp"}],
-                    [{"text": "وزن", "callback_data": "symp_weight"}],
-                    [{"text": "📊 مشاهده تاریخچه علائم", "callback_data": "symp_history"}],
-                    [{"text": "⬅ بازگشت", "callback_data": "back"}]
-                ]
-            }
-            send_message(chat_id, "علائم را انتخاب کنید:", reply)
-        elif data == "symp_history":
-            img_path = plot_symptoms(chat_id)
-            if img_path:
-                send_photo(chat_id, img_path, "تاریخچه علائم شما")
             else:
-                send_message(chat_id, "هیچ رکوردی برای شما ثبت نشده است.")
-        elif data in ["symp_sugar", "symp_bp", "symp_weight"]:
-            symptom_map = {
-                "symp_sugar": "قند خون",
-                "symp_bp": "فشار خون",
-                "symp_weight": "وزن"
-            }
-            user_state[str(chat_id)] = symptom_map[data]
-            save_user_state()
-            send_message(chat_id, f"لطفاً مقدار {symptom_map[data]} خود را وارد کنید:")
-        elif data == "expert":
-            send_message(chat_id,
-                         "برای ارتباط با کارشناس لطفاً پیام خود را ارسال کنید.\n"
-                         "کارشناس در کمتر از ۲۴ ساعت پاسخ می‌دهد.")
-        elif data == "back":
-            send_message(chat_id, "منوی اصلی :", main_menu())
+                send_message(chat_id, "لطفا پیام خود را به شکل 'نوع: مقدار' وارد کنید، مثال:\nقند خون: 120")
+        except Exception as e:
+            send_message(chat_id, f"خطا در ثبت علائم: {e}")
 
-    return "ok"
+        send_message(chat_id, "برای بازگشت به منو اصلی، 'منو' را تایپ کنید.")
 
-@app.route("/")
-def home():
-    return "Bot is running"
+    elif status == "education":
+        try:
+            response = handle_education(text)
+            send_message(chat_id, response)
+        except Exception as e:
+            send_message(chat_id, f"خطا در بخش آموزش: {e}")
+        send_message(chat_id, "برای بازگشت به منو اصلی، 'منو' را تایپ کنید.")
+
+# دریافت پیام‌ها
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    try:
+        data = request.get_json()
+        if "message" in data:
+            chat_id = data["message"]["chat"]["id"]
+            text = data["message"].get("text", "")
+            handle_user_message(chat_id, text)
+    except Exception as e:
+        print(f"Webhook error: {e}")
+    return {"ok": True}
+
+# ست کردن وب‌هوک
+@app.route("/set_webhook", methods=["GET"])
+def set_webhook():
+    try:
+        url = f"{TELEGRAM_API_URL}/setWebhook?url={WEBHOOK_URL}/{TOKEN}"
+        response = requests.get(url, timeout=5)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

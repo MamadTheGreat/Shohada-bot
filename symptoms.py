@@ -1,36 +1,40 @@
 import os
-import json
 from datetime import datetime
 import matplotlib.pyplot as plt
 import pandas as pd
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
+# مسیر فایل JSON سرویس اکانت
+SERVICE_ACCOUNT_FILE = "service_account.json"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SHEET_ID = os.environ.get("SHEET_ID")  # از متغیر محیطی بخوان
 
-google_sa = json.loads(os.environ["GOOGLE_CREDS"])
-SHEET_ID = os.environ["SHEET_ID"]
-
-creds = service_account.Credentials.from_service_account_info(google_sa, scopes=SCOPES)
+creds = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+)
 service = build("sheets", "v4", credentials=creds)
 sheet = service.spreadsheets().values()
-
 RANGE = "Symptoms!A:E"
 
-def add_symptom(user_id, symptom_type, value):
+def add_symptom(user_id, symptom_type, value, dia_value=None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     glucose = sys_bp = dia_bp = weight = ""
+    
     if symptom_type == "قند خون":
         glucose = value
     elif symptom_type == "فشار خون":
         sys_bp = value
+        dia_bp = dia_value if dia_value else ""
     elif symptom_type == "وزن":
         weight = value
 
     row = [timestamp, glucose, sys_bp, dia_bp, weight]
     try:
-        sheet.append(spreadsheetId=SHEET_ID, range=RANGE,
-                     valueInputOption="USER_ENTERED", body={"values": [row]}).execute()
+        sheet.append(
+            spreadsheetId=SHEET_ID, range=RANGE,
+            valueInputOption="USER_ENTERED", body={"values": [row]}
+        ).execute()
     except Exception as e:
         print("Error saving symptom:", e)
 
@@ -45,20 +49,23 @@ def get_symptom_history(symptom_type):
     if len(values) <= 1:
         return None
 
-    df = pd.DataFrame(values[1:], columns=values[0])
+    # ساخت DataFrame با ستون‌ها
+    df = pd.DataFrame(values[1:], columns=["Date", "Glucose", "Sys", "Dia", "Weight"])
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")  # تبدیل رشته به datetime
 
     if symptom_type == "قند خون":
-        df = df[df["Glucose"] != ""]
+        df = df[df["Glucose"].astype(str) != ""]
         df["Glucose"] = df["Glucose"].astype(float)
     elif symptom_type == "فشار خون":
-        df = df[df["Sys"] != ""]
+        df = df[(df["Sys"].astype(str) != "") & (df["Dia"].astype(str) != "")]
         df["Sys"] = df["Sys"].astype(float)
         df["Dia"] = df["Dia"].astype(float)
     elif symptom_type == "وزن":
-        df = df[df["Weight"] != ""]
+        df = df[df["Weight"].astype(str) != ""]
         df["Weight"] = df["Weight"].astype(float)
     else:
         return None
+
     return df
 
 def plot_symptoms(user_id):
@@ -73,6 +80,7 @@ def plot_symptoms(user_id):
         return None
 
     plt.figure(figsize=(10,5))
+    
     if df_glucose is not None and not df_glucose.empty:
         plt.plot(df_glucose["Date"], df_glucose["Glucose"], marker="o", label="قند خون")
     if df_bp is not None and not df_bp.empty:
