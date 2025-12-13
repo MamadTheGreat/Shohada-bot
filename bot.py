@@ -1,147 +1,78 @@
-from flask import Flask, request
-import os
-import requests
-import json
-import time
+# Bot.py
 
-# وارد کردن ماژول‌های خودتان
-from symptoms import add_symptom, plot_symptoms
-from education import get_main_menu_keyboard, get_education_menu_keyboard, get_symptoms_nav_keyboard, handle_education # توابع کیبورد جدید به‌روز شدند
+import logging
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from config import TELEGRAM_BOT_TOKEN, PORT, WEBHOOK_URL, MAIN_MENU_BUTTONS
+from Education import EDUCATION_ENTRY_HANDLER, EDUCATION_TOPIC_HANDLER
+from Symptoms import SYMPTOM_ENTRY_HANDLER
 
-app = Flask(name)
+# --- تنظیمات لاگینگ ---
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# --- تنظیمات عمومی ---
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TOKEN}"
-WEBHOOK_PATH = f"/{TOKEN}"
+# ساختار کیبورد منوی اصلی (تعریف مجدد برای این ماژول)
+MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
+    MAIN_MENU_BUTTONS, 
+    resize_keyboard=True, 
+    one_time_keyboard=False
+)
 
-# ذخیره وضعیت کاربران
-user_sessions = {}
+# --- هندلر فرمان /start و خوش آمدگویی ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ارسال پیام خوش آمد و نمایش منوی اصلی."""
+    await update.message.reply_text(
+        "👋 **به ربات سلامتی و آموزش خوش آمدید!**\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+        reply_markup=MAIN_MENU_KEYBOARD,
+        parse_mode='Markdown'
+    )
 
-# --- توابع کمکی ---
-def send_message(chat_id, text, reply_markup=None):
-    """ارسال پیام متنی با پشتیبانی از دکمه‌های کیبوردی (Reply Keyboard)"""
-    try:
-        url = f"{TELEGRAM_API_URL}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text}
-        if reply_markup:
-            # تلگرام نیاز دارد که reply_markup به صورت یک رشته JSON باشد
-            payload["reply_markup"] = json.dumps(reply_markup)
-            
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Error sending message: {e}")
+# --- هندلر 'ارتباط با کارشناس' ---
+async def contact_expert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """مدیریت دکمه 'ارتباط با کارشناس'."""
+    await update.message.reply_text(
+        "📞 **ارتباط با کارشناس**\n\nلطفاً پیام خود را برای کارشناس ارسال کنید. "
+        "کارشناسان ما در اسرع وقت پاسخ خواهند داد.",
+        reply_markup=MAIN_MENU_KEYBOARD,
+        parse_mode='Markdown'
+    )
 
-def send_photo(chat_id, photo_path, caption=""):
-    """ارسال عکس (نمودار) به کاربر"""
-    try:
-        url = f"{TELEGRAM_API_URL}/sendPhoto"
-        with open(photo_path, "rb") as f:
-            files = {"photo": f}
-            data = {"chat_id": chat_id, "caption": caption}
-            requests.post(url, files=files, data=data, timeout=20)
-    except Exception as e:
-        print(f"Error sending photo: {e}")
+def main() -> None:
+    """شروع به کار ربات و مدیریت Webhook/Polling."""
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-# --- مدیریت پیام کاربر ---
-def handle_user_message(chat_id, text):
-    if not text:
-        return
-
-    text = text.strip()
+    # --- اضافه کردن هندلرها ---
     
-    # مدیریت بازگشت به منوی اصلی
-    if text == "➡️ بازگشت به منو اصلی":
-        user_sessions[chat_id] = "main"
-        send_message(chat_id, "به منوی اصلی بازگشتید. بخش مورد نظر خود را انتخاب کنید.", reply_markup=get_main_menu_keyboard())
-        return
+    # 1. Start Command و منوی اصلی
+    application.add_handler(CommandHandler("start", start_command))
+    
+    # 2. ماژول Education (ورود به منو و مدیریت موضوعات)
+    application.add_handler(EDUCATION_ENTRY_HANDLER)
+    application.add_handler(EDUCATION_TOPIC_HANDLER)
+    
+    # 3. ماژول Symptoms
+    application.add_handler(SYMPTOM_ENTRY_HANDLER)
+    
+    # 4. ارتباط با کارشناس
+    application.add_handler(MessageHandler(filters.Regex("^ارتباط با کارشناس$"), contact_expert))
+    
+    # --- اجرای ربات با Webhook یا Polling ---
+    if WEBHOOK_URL:
+        # اجرای Webhook (برای Render)
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TELEGRAM_BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}{TELEGRAM_BOT_TOKEN}"
+        )
+        logger.info(f"ربات در حال اجرا با Webhook در پورت {PORT} و URL: {WEBHOOK_URL}")
+    else:
+        # اجرای Polling (برای توسعه محلی)
+        logger.info("ربات در حال اجرا با Polling (محلی)")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    # اگر کاربر تازه وارد است یا درخواست /start می‌دهد
-    if text == "/start" or chat_id not in user_sessions:
-        user_sessions[chat_id] = "main"
-        send_message(chat_id, "به ربات خوش آمدید. بخش مورد نظر خود را انتخاب کنید.", reply_markup=get_main_menu_keyboard())
-        return
-
-    status = user_sessions.get(chat_id, "main")
-
-    # --- بخش منوی اصلی (مدیریت دکمه‌ها) ---
-    if status == "main":
-        if text == "📝 ثبت علائم":
-            user_sessions[chat_id] = "symptoms"
-            # نمایش کیبورد بازگشت در بخش علائم
-            send_message(chat_id, "وارد بخش ثبت علائم شدید.\nلطفا نوع و مقدار را با دو نقطه جدا کنید.\nمثال:\nقند خون: 120", reply_markup=get_symptoms_nav_keyboard())
-        
-        elif text == "📘 آموزش":
-            user_sessions[chat_id] = "education"
-            # نمایش کیبورد آموزشی
-            send_message(chat_id, "به بخش آموزش خوش آمدید.\nموضوع مورد نظر خود را از لیست زیر انتخاب کنید:", reply_markup=get_education_menu_keyboard())
-
-        elif text == "👤 اتصال به کارشناس":
-            send_message(chat_id, "این قابلیت در دست توسعه است. لطفا از منو اصلی استفاده کنید.", reply_markup=get_main_menu_keyboard())
-
-        else:
-            send_message(chat_id, "لطفا از دکمه‌های منو اصلی استفاده کنید.", reply_markup=get_main_menu_keyboard())
-
-
-    # --- بخش ثبت علائم ---
-    elif status == "symptoms":
-        if ":" in text:
-            try:
-                parts = text.split(":", 1)
-                symptom_type = parts[0].strip()
-                value = parts[1].strip()
-
-                if add_symptom(chat_id, symptom_type, value):
-                    send_message(chat_id, f"✅ {symptom_type} با مقدار {value} ثبت شد.", reply_markup=get_symptoms_nav_keyboard())
-                    
-                    send_message(chat_id, "⏳ در حال ترسیم نمودار...", reply_markup=get_symptoms_nav_keyboard())
-                    time.sleep(1)
-                    chart_path = plot_symptoms(chat_id)
-                    if chart_path and os.path.exists(chart_path):
-                        send_photo(chat_id, chart_path, caption="تاریخچه نموداری شما")
-                        os.remove(chart_path)
-                    else:
-                        send_message(chat_id, "داده کافی برای رسم نمودار وجود ندارد یا خطایی رخ داد.", reply_markup=get_symptoms_nav_keyboard())
-                else:
-                    send_message(chat_id, "❌ خطا در اتصال به دیتابیس (گوگل شیت).", reply_markup=get_symptoms_nav_keyboard())
-            
-            except Exception as e:
-                print(f"Error processing symptom: {e}")
-                send_message(chat_id, "خطا در پردازش. لطفا طبق الگو ارسال کنید.", reply_markup=get_symptoms_nav_keyboard())
-        else:
-            send_message(chat_id, "فرمت نادرست است. لطفا طبق مثال زیر عمل کنید:\nقند خون: 120", reply_markup=get_symptoms_nav_keyboard())
-
-
-    # --- بخش آموزش ---
-    elif status == "education":
-        response = handle_education(text)
-        send_message(chat_id, response, reply_markup=get_education_menu_keyboard())
-
-# --- مدیریت Webhook (دریافت پیام‌ها) ---
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
-    try:
-        data = request.get_json()
-        if "message" in data:
-            chat_id = data["message"]["chat"]["id"]
-            text = data["message"].get("text", "")
-            handle_user_message(chat_id, text)
-    except Exception as e:
-        print(f"Webhook error: {e}")
-    return {"ok": True}
-
-# --- ست کردن وب‌هوک ---
-@app.route("/set_webhook", methods=["GET"])
-def set_webhook():
-    try:
-        url = f"{TELEGRAM_API_URL}/setWebhook?url={WEBHOOK_URL}{WEBHOOK_PATH}"
-        response = requests.get(url, timeout=5)
-        return response.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-# --- اجرای برنامه ---
-if name == "main":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__ == "__main__":
+    main()
