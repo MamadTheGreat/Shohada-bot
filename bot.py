@@ -1,149 +1,146 @@
 from flask import Flask, request
-import os
 import requests
-import json
-import time # برای وقفه‌های احتمالی در رسم نمودار
+import os
 
-# وارد کردن ماژول‌های خودتان
+from education import (
+    main_menu_keyboard,
+    disease_menu_keyboard,
+    diabetes_menu_keyboard
+)
 from symptoms import add_symptom, plot_symptoms
-from education import handle_education, get_main_menu_keyboard, get_remove_keyboard # توابع کیبورد اضافه شدند
 
 app = Flask(__name__)
 
-# --- تنظیمات عمومی ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TOKEN}"
-WEBHOOK_PATH = f"/{TOKEN}" # مسیر استاندارد وب‌هوک
+TG_URL = f"https://api.telegram.org/bot{TOKEN}"
+WEBHOOK_PATH = f"/webhook/{TOKEN}"
 
-# ذخیره وضعیت کاربران
-user_sessions = {}
+user_state = {}
 
-# --- توابع کمکی ---
-def send_message(chat_id, text, reply_markup=None):
-    """ارسال پیام متنی با پشتیبانی از دکمه‌های کیبوردی (Reply Keyboard)"""
-    try:
-        url = f"{TELEGRAM_API_URL}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text}
-        if reply_markup:
-            # تلگرام نیاز دارد که reply_markup به صورت یک رشته JSON باشد
-            payload["reply_markup"] = json.dumps(reply_markup)
-            
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Error sending message: {e}")
+def send_message(chat_id, text, keyboard=None):
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    if keyboard:
+        payload["reply_markup"] = keyboard
+    requests.post(f"{TG_URL}/sendMessage", json=payload)
 
-def send_photo(chat_id, photo_path, caption=""):
-    """ارسال عکس (نمودار) به کاربر"""
-    try:
-        url = f"{TELEGRAM_API_URL}/sendPhoto"
-        with open(photo_path, "rb") as f:
-            files = {"photo": f}
-            data = {"chat_id": chat_id, "caption": caption}
-            requests.post(url, files=files, data=data, timeout=20)
-    except Exception as e:
-        print(f"Error sending photo: {e}")
-
-# --- مدیریت پیام کاربر ---
-def handle_user_message(chat_id, text):
-    if not text:
-        return
-
-    text = text.strip()
-    keyboard = get_main_menu_keyboard() # کیبورد اصلی
-
-    # اگر کاربر تازه وارد است یا درخواست منو می‌دهد
-    if text == "/start" or text.lower() == "منو" or chat_id not in user_sessions:
-        user_sessions[chat_id] = "main"
-        send_message(chat_id, "به ربات خوش آمدید. بخش مورد نظر خود را انتخاب کنید.", reply_markup=keyboard)
-        return
-
-    status = user_sessions[chat_id]
-
-    # --- بخش منوی اصلی (مدیریت دکمه‌ها) ---
-    if status == "main":
-        if text == "📝 ثبت علائم":
-            user_sessions[chat_id] = "symptoms"
-            # حذف کیبورد اصلی برای امکان تایپ راحت (اگرچه دکمه‌ها در education.py تعریف شده‌اند)
-            send_message(chat_id, "وارد بخش ثبت علائم شدید.\nلطفا نوع و مقدار را با دو نقطه جدا کنید.\nمثال:\nقند خون: 120", reply_markup=get_remove_keyboard())
-        
-        elif text == "📘 آموزش":
-            user_sessions[chat_id] = "education"
-            send_message(chat_id, "به بخش آموزش خوش آمدید.\nموضوع خود را بنویسید (مثلاً: دیابت، فشار خون، قلب):")
-
-        elif text == "👤 اتصال به کارشناس":
-            send_message(chat_id, "این قابلیت در دست توسعه است. برای بازگشت 'منو' را تایپ کنید.", reply_markup=keyboard)
-
-        else:
-            send_message(chat_id, "لطفا از دکمه‌های منو استفاده کنید.", reply_markup=keyboard)
-
-
-    # --- بخش ثبت علائم ---
-    elif status == "symptoms":
-        if ":" in text:
-            try:
-                # جدا کردن متن با اولین دو نقطه
-                parts = text.split(":", 1)
-                symptom_type = parts[0].strip()
-                value = parts[1].strip()
-
-                # تلاش برای ثبت در گوگل شیت
-                if add_symptom(chat_id, symptom_type, value):
-                    send_message(chat_id, f"✅ {symptom_type} با مقدار {value} ثبت شد.")
-                    
-                    # رسم و ارسال نمودار
-                    send_message(chat_id, "⏳ در حال ترسیم نمودار...")
-                    time.sleep(1) # وقفه کوتاه
-                    
-                    chart_path = plot_symptoms(chat_id)
-                    if chart_path and os.path.exists(chart_path):
-                        send_photo(chat_id, chart_path, caption="تاریخچه نموداری شما")
-                        os.remove(chart_path) # حذف فایل موقت نمودار
-                    else:
-                        send_message(chat_id, "داده کافی برای رسم نمودار وجود ندارد یا خطایی رخ داد.")
-                else:
-                    send_message(chat_id, "❌ خطا در اتصال به دیتابیس (گوگل شیت).")
-            
-            except Exception as e:
-                print(f"Error processing symptom: {e}")
-                send_message(chat_id, "خطا در پردازش. لطفا طبق الگو ارسال کنید.")
-        else:
-            send_message(chat_id, "فرمت نادرست است. مثال:\nقند خون: 120")
-        
-        send_message(chat_id, "برای بازگشت به منو اصلی، 'منو' را تایپ کنید.", reply_markup=keyboard)
-
-
-    # --- بخش آموزش ---
-    elif status == "education":
-        response = handle_education(text)
-        send_message(chat_id, response)
-        send_message(chat_id, "برای بازگشت به منو اصلی، 'منو' را تایپ کنید.")
-
-# --- مدیریت Webhook (دریافت پیام‌ها) ---
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json()
-        if "message" in data:
-            chat_id = data["message"]["chat"]["id"]
-            text = data["message"].get("text", "")
-            handle_user_message(chat_id, text)
-    except Exception as e:
-        print(f"Webhook error: {e}")
-    return {"ok": True}
+    data = request.json
+    chat_id = data["message"]["chat"]["id"]
+    text = data["message"].get("text", "")
 
-# --- ست کردن وب‌هوک ---
-@app.route("/set_webhook", methods=["GET"])
+    # start
+    if text == "/start":
+        user_state[chat_id] = "MAIN"
+        send_message(
+            chat_id,
+            "سلام 🌱\nبه ربات پایش سلامت خوش آمدید",
+            main_menu_keyboard()
+        )
+        return "ok"
+
+    # منوی اصلی
+    if text == "انتخاب بیماری":
+        user_state[chat_id] = "DISEASE"
+        send_message(chat_id, "بیماری را انتخاب کنید:", disease_menu_keyboard())
+        return "ok"
+
+    if text == "دیابت":
+        user_state[chat_id] = "DIABETES"
+        send_message(chat_id, "منوی دیابت:", diabetes_menu_keyboard())
+        return "ok"
+
+    # ثبت علائم
+    if text == "ثبت علائم":
+        user_state[chat_id] = "SYMPTOM_MENU"
+        send_message(
+            chat_id,
+            "کدام مورد را ثبت می‌کنید؟",
+            {
+                "keyboard": [
+                    ["قند خون"],
+                    ["فشار خون"],
+                    ["وزن"],
+                    ["بازگشت"]
+                ],
+                "resize_keyboard": True
+            }
+        )
+        return "ok"
+
+    if text == "قند خون":
+        user_state[chat_id] = "WAIT_SUGAR"
+        send_message(chat_id, "عدد قند خون (mg/dl) را وارد کنید:")
+        return "ok"
+
+    if text == "وزن":
+        user_state[chat_id] = "WAIT_WEIGHT"
+        send_message(chat_id, "وزن (kg) را وارد کنید:")
+        return "ok"
+
+    if text == "فشار خون":
+        user_state[chat_id] = "WAIT_BP_SYS"
+        send_message(chat_id, "عدد سیستول را وارد کنید:")
+        return "ok"
+
+    # دریافت اعداد
+    if user_state.get(chat_id) == "WAIT_SUGAR":
+        add_symptom(chat_id, "sugar", text)
+        send_message(chat_id, "✅ ثبت شد", diabetes_menu_keyboard())
+        user_state[chat_id] = "DIABETES"
+        return "ok"
+
+    if user_state.get(chat_id) == "WAIT_WEIGHT":
+        add_symptom(chat_id, "weight", text)
+        send_message(chat_id, "✅ ثبت شد", diabetes_menu_keyboard())
+        user_state[chat_id] = "DIABETES"
+        return "ok"
+
+    if user_state.get(chat_id) == "WAIT_BP_SYS":
+        user_state[chat_id] = f"WAIT_BP_DIA:{text}"
+        send_message(chat_id, "عدد دیاستول را وارد کنید:")
+        return "ok"
+
+    if user_state.get(chat_id, "").startswith("WAIT_BP_DIA"):
+        sys = user_state[chat_id].split(":")[1]
+        dia = text
+        add_symptom(chat_id, "blood_pressure", f"{sys}/{dia}")
+        send_message(chat_id, "✅ ثبت شد", diabetes_menu_keyboard())
+        user_state[chat_id] = "DIABETES"
+        return "ok"
+
+    # نمودار
+    if text == "نمایش نمودار":
+        path = plot_symptoms(chat_id)
+        if path:
+            with open(path, "rb") as f:
+                requests.post(
+                    f"{TG_URL}/sendPhoto",
+                    data={"chat_id": chat_id},
+                    files={"photo": f}
+                )
+        else:
+            send_message(chat_id, "داده‌ای برای نمایش وجود ندارد")
+        return "ok"
+
+    if text == "بازگشت":
+        user_state[chat_id] = "MAIN"
+        send_message(chat_id, "منوی اصلی:", main_menu_keyboard())
+        return "ok"
+
+    send_message(chat_id, "دستور نامعتبر ❌")
+    return "ok"
+
+@app.route("/set_webhook")
 def set_webhook():
-    try:
-        url = f"{TELEGRAM_API_URL}/setWebhook?url={WEBHOOK_URL}{WEBHOOK_PATH}"
-        response = requests.get(url, timeout=5)
-        return response.json()
-    except Exception as e:
-        return {"error": str(e)}
+    return requests.get(
+        f"{TG_URL}/setWebhook",
+        params={"url": WEBHOOK_URL + WEBHOOK_PATH}
+    ).json()
 
-# --- اجرای برنامه ---
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    # debug=True برای محیط Production نامناسب است.
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
